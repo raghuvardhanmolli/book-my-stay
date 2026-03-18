@@ -1,32 +1,31 @@
 /**
  * Book My Stay - Hotel Booking Management System
  *
- * Use Case 9: Error Handling & Validation
+ * Use Case 10: Booking Cancellation & Inventory Rollback
  *
- * Demonstrates validation, custom exceptions, and fail-fast design
- * to ensure system reliability and prevent invalid state changes.
+ * Demonstrates safe cancellation of confirmed bookings using
+ * Stack and controlled rollback to maintain inventory consistency.
  *
  * @author YourName
- * @version 9.0
+ * @version 10.0
  */
 
 import java.util.*;
 
-// Custom Exception
-class InvalidBookingException extends Exception {
-    public InvalidBookingException(String message) {
-        super(message);
-    }
-}
-
 // Reservation class
 class Reservation {
+    private String reservationId;
     private String guestName;
     private String roomType;
 
-    public Reservation(String guestName, String roomType) {
+    public Reservation(String reservationId, String guestName, String roomType) {
+        this.reservationId = reservationId;
         this.guestName = guestName;
         this.roomType = roomType;
+    }
+
+    public String getReservationId() {
+        return reservationId;
     }
 
     public String getGuestName() {
@@ -36,6 +35,12 @@ class Reservation {
     public String getRoomType() {
         return roomType;
     }
+
+    public void display() {
+        System.out.println("Reservation ID: " + reservationId +
+                " | Guest: " + guestName +
+                " | Room: " + roomType);
+    }
 }
 
 // Inventory class
@@ -43,67 +48,98 @@ class RoomInventory {
     private Map<String, Integer> inventory = new HashMap<>();
 
     public RoomInventory() {
-        inventory.put("Single Room", 1);
-        inventory.put("Double Room", 1);
+        inventory.put("Single Room", 2);
+        inventory.put("Double Room", 2);
     }
 
-    public boolean isValidRoomType(String type) {
-        return inventory.containsKey(type);
+    public void increment(String type) {
+        inventory.put(type, inventory.getOrDefault(type, 0) + 1);
+    }
+
+    public void decrement(String type) {
+        inventory.put(type, inventory.getOrDefault(type, 0) - 1);
     }
 
     public int getAvailability(String type) {
         return inventory.getOrDefault(type, 0);
     }
 
-    public void decrement(String type) throws InvalidBookingException {
-        int available = getAvailability(type);
-
-        if (available <= 0) {
-            throw new InvalidBookingException("No rooms available for " + type);
-        }
-
-        inventory.put(type, available - 1);
-    }
-}
-
-// Validator class
-class BookingValidator {
-
-    public static void validate(Reservation r, RoomInventory inventory)
-            throws InvalidBookingException {
-
-        if (r.getGuestName() == null || r.getGuestName().isEmpty()) {
-            throw new InvalidBookingException("Guest name cannot be empty.");
-        }
-
-        if (!inventory.isValidRoomType(r.getRoomType())) {
-            throw new InvalidBookingException("Invalid room type: " + r.getRoomType());
-        }
-
-        if (inventory.getAvailability(r.getRoomType()) <= 0) {
-            throw new InvalidBookingException(
-                    "Room not available: " + r.getRoomType());
+    public void displayInventory() {
+        System.out.println("\nCurrent Inventory:");
+        for (String type : inventory.keySet()) {
+            System.out.println(type + " : " + inventory.get(type));
         }
     }
 }
 
-// Booking Service
-class BookingService {
+// Booking History
+class BookingHistory {
+    private Map<String, Reservation> confirmed = new HashMap<>();
+    private Stack<String> cancelledStack = new Stack<>();
 
-    public void processBooking(Reservation r, RoomInventory inventory) {
+    public void addReservation(Reservation r) {
+        confirmed.put(r.getReservationId(), r);
+    }
 
-        try {
-            // Validate first (Fail-Fast)
-            BookingValidator.validate(r, inventory);
+    public Reservation getReservation(String id) {
+        return confirmed.get(id);
+    }
 
-            // Allocate room (safe)
-            inventory.decrement(r.getRoomType());
+    public boolean exists(String id) {
+        return confirmed.containsKey(id);
+    }
 
-            System.out.println("Booking Successful for " + r.getGuestName() +
-                    " (" + r.getRoomType() + ")");
+    public void cancelReservation(String id) {
+        if (confirmed.containsKey(id)) {
+            cancelledStack.push(id);
+            confirmed.remove(id);
+        }
+    }
 
-        } catch (InvalidBookingException e) {
-            System.out.println("Booking Failed: " + e.getMessage());
+    public void displayAll() {
+        System.out.println("\nConfirmed Reservations:");
+        for (Reservation r : confirmed.values()) {
+            r.display();
+        }
+    }
+
+    public Stack<String> getCancelledStack() {
+        return cancelledStack;
+    }
+}
+
+// Cancellation Service
+class CancellationService {
+
+    private RoomInventory inventory;
+    private BookingHistory history;
+
+    public CancellationService(RoomInventory inventory, BookingHistory history) {
+        this.inventory = inventory;
+        this.history = history;
+    }
+
+    public void cancelBooking(String reservationId) {
+        if (!history.exists(reservationId)) {
+            System.out.println("Cancellation Failed: Reservation ID not found.");
+            return;
+        }
+
+        Reservation r = history.getReservation(reservationId);
+        // Rollback inventory
+        inventory.increment(r.getRoomType());
+        // Remove from history & track cancelled
+        history.cancelReservation(reservationId);
+
+        System.out.println("Booking Cancelled for " + r.getGuestName() +
+                " (Reservation ID: " + reservationId + ")");
+    }
+
+    public void displayCancelledHistory() {
+        Stack<String> stack = history.getCancelledStack();
+        System.out.println("\nCancelled Reservations (most recent first):");
+        for (int i = stack.size() - 1; i >= 0; i--) {
+            System.out.println(stack.get(i));
         }
     }
 }
@@ -116,24 +152,38 @@ public class BookMyStayApp {
         System.out.println("=====================================");
         System.out.println("   Welcome to Book My Stay App");
         System.out.println("=====================================");
-        System.out.println("Version: 9.0\n");
+        System.out.println("Version: 10.0\n");
 
         RoomInventory inventory = new RoomInventory();
-        BookingService service = new BookingService();
+        BookingHistory history = new BookingHistory();
 
-        // Valid booking
-        service.processBooking(new Reservation("Alice", "Single Room"), inventory);
+        // Sample confirmed reservations
+        Reservation r1 = new Reservation("SR1", "Alice", "Single Room");
+        Reservation r2 = new Reservation("DR1", "Bob", "Double Room");
+        history.addReservation(r1);
+        history.addReservation(r2);
 
-        // Invalid room type
-        service.processBooking(new Reservation("Bob", "Luxury Room"), inventory);
+        inventory.decrement(r1.getRoomType());
+        inventory.decrement(r2.getRoomType());
 
-        // No availability case
-        service.processBooking(new Reservation("Charlie", "Single Room"), inventory);
+        System.out.println("Initial confirmed bookings:");
+        history.displayAll();
+        inventory.displayInventory();
 
-        // Invalid guest name
-        service.processBooking(new Reservation("", "Double Room"), inventory);
+        // Initialize cancellation service
+        CancellationService cancelService = new CancellationService(inventory, history);
 
-        System.out.println("\nSystem remains stable after handling errors.");
-        System.out.println("Application terminated.");
+        // Cancel a booking
+        cancelService.cancelBooking("SR1");
+
+        // Attempt to cancel a non-existent booking
+        cancelService.cancelBooking("SR100");
+
+        // Display updated state
+        history.displayAll();
+        inventory.displayInventory();
+        cancelService.displayCancelledHistory();
+
+        System.out.println("\nApplication terminated.");
     }
 }
